@@ -5,8 +5,13 @@ import json
 import _thread
 import sys
 import getopt
+import signal
+
+# Ctrl+C 退出
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 proxy_server_host = "123.57.229.246"
+#proxy_server_host = socket.gethostname()
 proxy_server_port = 10000
 local_host = "127.0.0.1"
 
@@ -42,6 +47,7 @@ def forward_service(from_conn, to_conn, session_id):
         if session[session_id]["client"] != None:
             session[session_id]["client"].close()
         del session[session_id]
+    print("session:", session)
 
 def send_data(sock, data):
     length = len(data)
@@ -81,10 +87,12 @@ def proxy_server():
                 session_id = unique_session_id
                 session[session_id] = {"client":conn_sock, "server":None}
                 send_data(conn_sock, json.dumps({"session_id":session_id}).encode("utf-8"))
+                print("session:", session)
             elif req["cmd"] == "create_fake_host":
                 session_id = int(req["session_id"])
                 if session_id in session:
                     session[session_id]["server"] = conn_sock
+                    print("waiting server response...")
                     server_status = recv_data(conn_sock).decode("utf-8")
                     print("server status:", server_status)
                     if server_status == "ready":
@@ -94,11 +102,13 @@ def proxy_server():
                     else:
                         conn_sock.close()
                         session[session_id]["server"] = None
+                    print("session:", session)
                 else:
                     conn_sock.close()
             else:
                 conn_sock.close()
         except:
+            print("网络异常,下一次请求...")
             conn_sock.close()
             pass
 
