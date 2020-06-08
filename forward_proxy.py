@@ -63,58 +63,64 @@ def recv_data(sock):
         raise "too big data"
     return sock.recv(length)
 
+def proxy_handler(conn_sock):
+    try:
+        req = recv_data(conn_sock).decode("utf-8")
+        print("request: ", req)
+        req = json.loads(req)
+    except:
+        print("请求不合法")
+        return
+
+    global unique_session_id
+    try:
+        if req["cmd"] == "create_client":
+            unique_session_id += 1
+            session_id = unique_session_id
+            session[session_id] = {"client":conn_sock, "server":None}
+            send_data(conn_sock, json.dumps({"session_id":session_id}).encode("utf-8"))
+            print("session:", session)
+        elif req["cmd"] == "create_fake_host":
+            session_id = int(req["session_id"])
+            if session_id in session:
+                session[session_id]["server"] = conn_sock
+                print("waiting server response...")
+                server_status = recv_data(conn_sock).decode("utf-8")
+                print("server status:", server_status)
+                if server_status == "ready":
+                    send_data(session[session_id]["client"], "ready".encode("utf-8"))
+                    _thread.start_new_thread(forward_service, (session[session_id]["client"], session[session_id]["server"], session_id))
+                    _thread.start_new_thread(forward_service, (session[session_id]["server"], session[session_id]["client"], session_id))
+                else:
+                    conn_sock.close()
+                    session[session_id]["server"] = None
+                print("session:", session)
+            else:
+                conn_sock.close()
+        elif req["cmd"] == "show_session":
+            print("session: ", session)
+        else:
+            conn_sock.close()
+    except:
+        print("网络异常,下一次请求...")
+        conn_sock.close()
+
 def proxy_server():
+    print("service start...")
     server_sock = socket.socket()
     server_sock.bind((socket.gethostname(), proxy_server_port))
     server_sock.listen(5)
+    print("service ready...")
 
     while True:
         conn_sock, addr = server_sock.accept()
-        try:
-            print("connect from :", addr)
-            req = recv_data(conn_sock).decode("utf-8")
-            print("request: ", req)
-            req = json.loads(req)
-        except:
-            print("请求不合法")
-            continue
-
-        global session
-        global unique_session_id
-        try :
-            if req["cmd"] == "create_client":
-                unique_session_id += 1
-                session_id = unique_session_id
-                session[session_id] = {"client":conn_sock, "server":None}
-                send_data(conn_sock, json.dumps({"session_id":session_id}).encode("utf-8"))
-                print("session:", session)
-            elif req["cmd"] == "create_fake_host":
-                session_id = int(req["session_id"])
-                if session_id in session:
-                    session[session_id]["server"] = conn_sock
-                    print("waiting server response...")
-                    server_status = recv_data(conn_sock).decode("utf-8")
-                    print("server status:", server_status)
-                    if server_status == "ready":
-                        send_data(session[session_id]["client"], "ready".encode("utf-8"))
-                        _thread.start_new_thread(forward_service, (session[session_id]["client"], session[session_id]["server"], session_id))
-                        _thread.start_new_thread(forward_service, (session[session_id]["server"], session[session_id]["client"], session_id))
-                    else:
-                        conn_sock.close()
-                        session[session_id]["server"] = None
-                    print("session:", session)
-                else:
-                    conn_sock.close()
-            else:
-                conn_sock.close()
-        except:
-            print("网络异常,下一次请求...")
-            conn_sock.close()
-            pass
+        print("connection from :", addr)
+        _thread.start_new_thread(proxy_handler, (conn_sock,))
 
 def client_server(port):
     proxy_sock = socket.socket()
     proxy_sock.connect((proxy_server_host, proxy_server_port))
+    print("connect proxy successfully!")
 
     req = {"cmd":"create_client"}
     send_data(proxy_sock, json.dumps(req).encode("utf-8"))
@@ -136,14 +142,19 @@ def client_server(port):
 def fake_host_server(session_id, port):
     proxy_sock = socket.socket()
     proxy_sock.connect((proxy_server_host, proxy_server_port))
+    print("connect proxy successfully!")
+
     req = {"cmd":"create_fake_host", "session_id":session_id}
     send_data(proxy_sock, json.dumps(req).encode("utf-8"))
     server_sock = socket.socket()
     server_sock.bind((local_host, port))
     server_sock.listen(5)
+    print("listening...")
+
     client_sock, addr = server_sock.accept()
     print("conn from: ", addr)
     send_data(proxy_sock, "ready".encode("utf-8"))
+    print("begin service...")
     _thread.start_new_thread(forward_data, (client_sock, proxy_sock))
     forward_data(proxy_sock, client_sock)
 
@@ -152,6 +163,7 @@ def help():
     print("     cmd: create_client 被连接者，需要提供端口（sl_proxy.py --cmd=create_client --port=4024)")
     print("     cmd: create_fake_host 本地模拟远程被连接着，用连接者返回的session_id进行连接(sl_proxy.py --cmd=create_fake_host --session_id=1 --port=4024), port是本地监听端口")
     print("     cmd: create_server 服务程序")
+    print("     cmd: show_session 展示服务器正在使用的session")
     sys.exit(0)
 
 def main(argv):
